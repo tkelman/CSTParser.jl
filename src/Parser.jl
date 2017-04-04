@@ -374,7 +374,53 @@ function parse_directory(path::String, proj = Project(path,[]))
     proj
 end
 
+function parse_jmd(str)
+    currentbyte = 1
+    blocks = []
+    ps = ParseState(str)
+    while ps.nt.kind != Tokens.ENDMARKER
+        next(ps)
+        if ps.t.kind == Tokens.CMD || ps.t.kind == Tokens.TRIPLE_CMD
+            push!(blocks, (ps.t.startbyte, INSTANCE(ps)))
+        end
+    end
+    top = EXPR(BLOCK, [])
+    if isempty(blocks)
+        return top
+    end
 
+    for (startbyte, b) in blocks
+        if b isa LITERAL{Tokens.TRIPLE_CMD} && (startswith(b.val, "```julia") || startswith(b.val, "```{julia"))
+            blockstr = b.val[4:end-3]
+            ps = ParseState(blockstr)
+            while ps.nt.startpos[1]==1
+                next(ps)
+            end
+            prec_str_size = currentbyte:startbyte + ps.nt.startbyte + 3
+            push!(top.args, LITERAL{Tokens.STRING}(sizeof(str[prec_str_size]), str[prec_str_size]))
+            args, ps = parse(ps, true)
+            append!(top.args, args.args)
+            top.span = sum(x.span for x in top)
+            currentbyte = top.span+1
+        elseif b isa LITERAL{Tokens.CMD} && startswith(b.val, "`j ")
+            blockstr = b.val[4:end-1]
+            ps = ParseState(blockstr)
+            next(ps)
+            prec_str_size = currentbyte:startbyte + ps.nt.startbyte + 1
+            push!(top.args, LITERAL{Tokens.STRING}(sizeof(str[prec_str_size]), str[prec_str_size]))
+            args, ps = parse(ps, true)
+            append!(top.args, args.args)
+            top.span = sum(x.span for x in top)
+            currentbyte = top.span+1
+        end
+    end
+
+    prec_str_size = currentbyte:sizeof(str)
+    push!(top.args, LITERAL{Tokens.STRING}(sizeof(str[prec_str_size]), str[prec_str_size]))
+    top.span = sum(x.span for x in top)
+
+    return top
+end
 
 ischainable(t::Token) = t.kind == Tokens.PLUS || t.kind == Tokens.STAR || t.kind == Tokens.APPROX
 LtoR(prec::Int) = 1 ≤ prec ≤ 5 || prec == 13
